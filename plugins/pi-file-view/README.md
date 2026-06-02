@@ -7,18 +7,18 @@ Pi extension for browsing files and git diffs in a terminal overlay.
 ### From GitHub (recommended)
 
 ```bash
-pi install git:github.com/your-username/agent-utils/pi-file-view
+pi install git:github.com/your-username/agent-utils
 ```
 
 Or with a pinned ref:
 ```bash
-pi install git:github.com/your-username/agent-utils/pi-file-view@main
+pi install git:github.com/your-username/agent-utils@main
 ```
 
 ### Manual copy
 
 ```bash
-cp -r pi-file-view ~/.pi/agent/extensions/
+cp -r plugins/pi-file-view ~/.pi/agent/extensions/
 ```
 
 ### Temporary load
