@@ -1,16 +1,18 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { FileViewOverlay } from "./overlay.js";
-import type { FileViewMode } from "./types.js";
+import type { FileViewMode, OverlaySessionState } from "./types.js";
 
 const COMMAND_TREE = "file-view:tree";
 const COMMAND_GIT = "file-view:git";
 const SHORTCUT = "ctrl+shift+f";
 
 export default function (pi: ExtensionAPI) {
-  let activeOverlay: { close: () => void } | null = null;
+  let activeOverlay: { close: () => void; snapshotState: () => OverlaySessionState } | null = null;
+  let lastOverlayState: OverlaySessionState | null = null;
 
   function dismissOverlay() {
     if (activeOverlay) {
+      lastOverlayState = activeOverlay.snapshotState();
       activeOverlay.close();
       activeOverlay = null;
     }
@@ -23,6 +25,10 @@ export default function (pi: ExtensionAPI) {
 
     dismissOverlay();
 
+    const initialState = lastOverlayState
+      ? { ...lastOverlayState, mode }
+      : null;
+
     const result = await ctx.ui.custom<void>(
       async (tui, theme, keybindings, done) => {
         const overlay = new FileViewOverlay({
@@ -31,7 +37,9 @@ export default function (pi: ExtensionAPI) {
           keybindings,
           cwd: ctx.cwd,
           initialMode: mode,
-          onClose: () => {
+          initialState,
+          onClose: (state) => {
+            lastOverlayState = state;
             activeOverlay = null;
             done();
           },
@@ -42,9 +50,11 @@ export default function (pi: ExtensionAPI) {
 
         activeOverlay = {
           close: () => {
+            lastOverlayState = overlay.snapshotState();
             overlay.close();
             done();
           },
+          snapshotState: () => overlay.snapshotState(),
         };
 
         return overlay;
@@ -82,7 +92,7 @@ export default function (pi: ExtensionAPI) {
         dismissOverlay();
         return;
       }
-      await openOverlay(ctx, "tree");
+      await openOverlay(ctx, lastOverlayState?.mode ?? "tree");
     },
   });
 }
