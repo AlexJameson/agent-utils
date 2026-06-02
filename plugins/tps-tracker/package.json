@@ -1,0 +1,21 @@
+{
+  "name": "tps-tracker",
+  "version": "0.1.0",
+  "description": "Pi extension that shows live token-per-second generation speed in the status bar",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi-extension"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typescript": "^5.4.0"
+  }
+}
