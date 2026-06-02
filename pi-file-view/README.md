@@ -34,10 +34,6 @@ pi -e ./src/index.ts
 | `g` | Switch to git mode |
 | `Esc` | Close overlay |
 
-## Dependencies
-
-- `delta` — Enhanced git diff (optional, falls back to `git diff`)
-
 ## Architecture
 
-See `plans/architecture.md` for current design docs, requirements, and future phases.
+See `architecture.md` for current design docs, requirements, and future phases.

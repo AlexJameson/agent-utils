@@ -1,6 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
-  Input,
   Markdown,
   type MarkdownTheme,
   type Focusable,
@@ -14,7 +13,7 @@ import { execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 
-import type { FileEntry, FileViewMode, GitSubmode, GitTreeScope, OverlaySessionState } from "./types.js";
+import type { FileEntry, FileViewMode, GitSubmode, GitTreeScope, OverlaySessionState, PaneLayout } from "./types.js";
 
 interface FileViewOptions {
   tui: TUI;
@@ -35,6 +34,12 @@ interface GitFileState {
   untracked: boolean;
 }
 
+interface DiffPreviewState {
+  title: string;
+  relPath: string;
+  rawDiff: string;
+}
+
 export class FileViewOverlay implements Focusable {
   private tui: TUI;
   private theme: Theme;
@@ -45,6 +50,7 @@ export class FileViewOverlay implements Focusable {
 
   private mode: FileViewMode;
   private focusedPane: "left" | "right" = "left";
+  private paneLayout: PaneLayout = "split";
   private leftScroll = 0;
   private rightScroll = 0;
   private selectedIndex = 0;
@@ -54,14 +60,14 @@ export class FileViewOverlay implements Focusable {
   private previewContent: string[] = [];
   private markdownPreview: Markdown | null = null;
   private markdownPreviewWidth = 0;
+  private diffPreview: DiffPreviewState | null = null;
+  private diffPreviewWidth = 0;
   private rightScrollByPath: Record<string, number> = {};
   private closed = false;
   private contentHeight = 0;
+  private showLineNumbers = false;
 
   private currentDir: string;
-  private filterQuery = "";
-  private filterMode = false;
-  private filterInput: Input;
 
   private selectedRepoPath: string | null = null;
   private gitSubmode: GitSubmode = "repo-picker";
@@ -82,18 +88,19 @@ export class FileViewOverlay implements Focusable {
     const initialState = options.initialState;
     this.mode = options.initialMode;
     this.focusedPane = initialState?.focusedPane ?? "left";
+    this.paneLayout = initialState?.paneLayout ?? "split";
     this.currentDir = initialState?.currentDir ?? options.cwd;
     this.leftScroll = initialState?.leftScroll ?? 0;
     this.selectedPath = initialState?.selectedPath ?? null;
-    this.filterQuery = initialState?.filterQuery ?? "";
     this.selectedRepoPath = initialState?.selectedRepoPath ?? null;
     this.gitSubmode = initialState?.gitSubmode ?? "repo-picker";
     this.gitTreeScope = initialState?.gitTreeScope ?? "changes";
     this.gitBaseRef = initialState?.gitBaseRef ?? null;
     this.rightScrollByPath = { ...(initialState?.rightScrollByPath ?? {}) };
 
-    this.filterInput = this.createFilterInput();
-    this.filterInput.setValue(this.filterQuery);
+    if (this.paneLayout === "single") {
+      this.focusedPane = "right";
+    }
 
     if (this.mode === "git" && this.selectedRepoPath && !this.isRepoDirectory(this.selectedRepoPath)) {
       this.selectedRepoPath = null;
@@ -115,28 +122,16 @@ export class FileViewOverlay implements Focusable {
     return {
       mode: this.mode,
       focusedPane: this.focusedPane,
+      paneLayout: this.paneLayout,
       currentDir: this.currentDir,
       selectedPath: this.selectedPath ?? this.selectedFile()?.path ?? null,
       leftScroll: this.leftScroll,
-      filterQuery: this.filterQuery,
       selectedRepoPath: this.selectedRepoPath,
       gitSubmode: this.gitSubmode,
       gitTreeScope: this.gitTreeScope,
       gitBaseRef: this.gitBaseRef,
       rightScrollByPath: { ...this.rightScrollByPath },
     };
-  }
-
-  private createFilterInput(): Input {
-    const input = new Input();
-    input.onEscape = () => {
-      this.exitFilterMode(false);
-    };
-    input.onSubmit = () => {
-      this.filterMode = false;
-      this.tui.requestRender();
-    };
-    return input;
   }
 
   private getMarkdownTheme(): MarkdownTheme {
@@ -178,6 +173,20 @@ export class FileViewOverlay implements Focusable {
     }
   }
 
+  private renderDiffPreview(width: number) {
+    if (!this.diffPreview) {
+      return;
+    }
+
+    this.previewContent = this.buildSideBySideDiff(
+      this.diffPreview.title,
+      this.diffPreview.relPath,
+      this.diffPreview.rawDiff,
+      Math.max(1, width),
+    );
+    this.diffPreviewWidth = Math.max(1, width);
+  }
+
   private selectedFile(): FileEntry | undefined {
     return this.visibleFiles[this.selectedIndex];
   }
@@ -207,17 +216,7 @@ export class FileViewOverlay implements Focusable {
   }
 
   private refreshVisibleFiles() {
-    const query = this.filterQuery.trim().toLowerCase();
-    if (!query) {
-      this.visibleFiles = [...this.allFiles];
-    } else {
-      this.visibleFiles = this.allFiles.filter((file) => {
-        if (file.name === "..") {
-          return true;
-        }
-        return file.name.toLowerCase().includes(query);
-      });
-    }
+    this.visibleFiles = [...this.allFiles];
 
     this.restoreSelection();
   }
@@ -284,7 +283,7 @@ export class FileViewOverlay implements Focusable {
     this.gitSubmode = "repo-picker";
     this.currentDir = this.cwd;
     this.gitFileState = new Map();
-    this.allFiles = this.discoverRepos(this.cwd, 2);
+    this.allFiles = this.discoverRepos(this.cwd, 4);
   }
 
   private loadGitAllFiles() {
@@ -650,7 +649,10 @@ export class FileViewOverlay implements Focusable {
   private loadPreview() {
     this.markdownPreview = null;
     this.markdownPreviewWidth = 0;
+    this.diffPreview = null;
+    this.diffPreviewWidth = 0;
     this.previewContent = [];
+    this.showLineNumbers = false;
 
     const file = this.selectedFile();
     if (!file) {
@@ -686,6 +688,7 @@ export class FileViewOverlay implements Focusable {
 
   private loadMarkdownPreview(file: FileEntry) {
     try {
+      this.showLineNumbers = true;
       const content = readFileSync(file.path, "utf8");
       if (content === "") {
         this.previewContent = [this.theme.fg("dim", "(empty file)")];
@@ -730,6 +733,8 @@ export class FileViewOverlay implements Focusable {
       return;
     }
 
+    this.showLineNumbers = true;
+
     try {
       const content = readFileSync(file.path, "utf8");
       if (content === "") {
@@ -770,11 +775,11 @@ export class FileViewOverlay implements Focusable {
       return;
     }
 
-    if (file.unstaged && this.loadGitDiffPreview(repoPath, relPath, "Unstaged changes", `git diff -- ${JSON.stringify(relPath)}`)) {
+    if (file.unstaged && this.loadGitDiffPreview(repoPath, relPath, "Unstaged changes", `git diff --no-color --no-ext-diff -- ${JSON.stringify(relPath)}`)) {
       return;
     }
 
-    if (file.staged && this.loadGitDiffPreview(repoPath, relPath, "Staged changes", `git diff --cached -- ${JSON.stringify(relPath)}`)) {
+    if (file.staged && this.loadGitDiffPreview(repoPath, relPath, "Staged changes", `git diff --no-color --no-ext-diff --cached -- ${JSON.stringify(relPath)}`)) {
       return;
     }
 
@@ -783,7 +788,7 @@ export class FileViewOverlay implements Focusable {
       repoPath,
       relPath,
       `Branch vs ${this.gitBaseRef}`,
-      `git diff ${JSON.stringify(mergeBase)}...HEAD -- ${JSON.stringify(relPath)}`,
+      `git diff --no-color --no-ext-diff ${JSON.stringify(mergeBase)}...HEAD -- ${JSON.stringify(relPath)}`,
     )) {
       return;
     }
@@ -797,31 +802,95 @@ export class FileViewOverlay implements Focusable {
   }
 
   private loadGitDiffPreview(repoPath: string, relPath: string, title: string, gitDiffCommand: string): boolean {
-    const result = this.runGitText(
-      repoPath,
-      `${gitDiffCommand} | delta --line-numbers 2>/dev/null || ${gitDiffCommand}`,
-    );
-
-    const lines = result.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    const result = this.runGitText(repoPath, gitDiffCommand);
+    const normalized = result.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const lines = normalized.split("\n");
     const hasContent = lines.some((line) => line.length > 0);
     if (!hasContent) {
       return false;
     }
 
-    this.previewContent = [
+    this.showLineNumbers = true;
+    this.diffPreview = {
+      title,
+      relPath,
+      rawDiff: normalized,
+    };
+    this.renderDiffPreview(1);
+    return true;
+  }
+
+  private buildSideBySideDiff(title: string, relPath: string, rawDiff: string, width: number): string[] {
+    const lines: string[] = [
       this.theme.fg("accent", title),
       this.theme.fg("dim", relPath),
       "",
-      ...lines,
     ];
-    return true;
+
+    const separator = this.theme.fg("borderMuted", " │ ");
+    const separatorWidth = visibleWidth(separator);
+    const columnWidth = Math.max(8, Math.floor((width - separatorWidth) / 2));
+    const pendingRemoved: string[] = [];
+    const pendingAdded: string[] = [];
+
+    const flushPending = () => {
+      const pairCount = Math.max(pendingRemoved.length, pendingAdded.length);
+      for (let i = 0; i < pairCount; i++) {
+        const left = pendingRemoved[i] ?? "";
+        const right = pendingAdded[i] ?? "";
+        const leftText = left
+          ? this.theme.fg("toolDiffRemoved", truncateToWidth(`- ${left}`, columnWidth, "...", true))
+          : " ".repeat(columnWidth);
+        const rightText = right
+          ? this.theme.fg("toolDiffAdded", truncateToWidth(`+ ${right}`, columnWidth, "...", true))
+          : " ".repeat(columnWidth);
+        lines.push(`${leftText}${separator}${rightText}`);
+      }
+      pendingRemoved.length = 0;
+      pendingAdded.length = 0;
+    };
+
+    for (const line of rawDiff.split("\n")) {
+      if (!line) {
+        flushPending();
+        lines.push("");
+        continue;
+      }
+
+      if (line.startsWith("diff --git ") || line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ")) {
+        continue;
+      }
+
+      if (line.startsWith("@@")) {
+        flushPending();
+        lines.push(this.theme.fg("accent", truncateToWidth(line, width, "...", true)));
+        continue;
+      }
+
+      if (line.startsWith("-")) {
+        pendingRemoved.push(line.slice(1));
+        continue;
+      }
+
+      if (line.startsWith("+")) {
+        pendingAdded.push(line.slice(1));
+        continue;
+      }
+
+      flushPending();
+      const context = line.startsWith(" ") ? line.slice(1) : line;
+      lines.push(this.theme.fg("toolDiffContext", truncateToWidth(`  ${context}`, width, "...", true)));
+    }
+
+    flushPending();
+    return lines;
   }
 
   handleInput(data: string): void {
     if (this.closed) return;
 
-    if (this.filterMode) {
-      this.handleFilterInput(data);
+    if (data === "\u001b") {
+      this.close();
       return;
     }
 
@@ -830,13 +899,13 @@ export class FileViewOverlay implements Focusable {
       return;
     }
 
-    if (data === "/") {
-      this.enterFilterMode();
+    if (data === "t" || data === "T") {
+      this.switchMode("tree");
       return;
     }
 
-    if (data === "t" || data === "T") {
-      this.switchMode("tree");
+    if (data === "v" || data === "V") {
+      this.togglePaneLayout();
       return;
     }
 
@@ -863,6 +932,11 @@ export class FileViewOverlay implements Focusable {
     }
 
     if (matchesKey(data, "tab")) {
+      if (this.paneLayout === "single") {
+        this.focusedPane = "right";
+        this.tui.requestRender();
+        return;
+      }
       this.focusedPane = this.focusedPane === "left" ? "right" : "left";
       this.tui.requestRender();
       return;
@@ -875,49 +949,11 @@ export class FileViewOverlay implements Focusable {
     }
   }
 
-  private handleFilterInput(data: string) {
-    this.filterInput.handleInput(data);
-    const nextQuery = this.filterInput.getValue();
-    if (nextQuery === this.filterQuery) {
-      this.tui.requestRender();
-      return;
-    }
-
-    this.filterQuery = nextQuery;
-    this.refreshVisibleFiles();
-    this.loadPreview();
-  }
-
-  private enterFilterMode() {
-    this.filterMode = true;
-    this.filterInput.setValue(this.filterQuery);
-    this.tui.requestRender();
-  }
-
-  private exitFilterMode(clear: boolean) {
-    this.filterMode = false;
-    if (clear) {
-      this.filterQuery = "";
-      this.filterInput.setValue("");
-      this.refreshVisibleFiles();
-      this.loadPreview();
-      return;
-    }
-    this.tui.requestRender();
-  }
-
-  private clearFilter() {
-    this.filterQuery = "";
-    this.filterInput.setValue("");
-    this.filterMode = false;
-  }
-
   private switchMode(mode: FileViewMode) {
     if (this.mode === mode) return;
     this.saveCurrentPreviewScroll();
     this.mode = mode;
     this.focusedPane = "left";
-    this.clearFilter();
     this.onModeChange(mode);
 
     if (mode === "tree") {
@@ -935,13 +971,18 @@ export class FileViewOverlay implements Focusable {
     this.loadFiles();
   }
 
+  private togglePaneLayout() {
+    this.paneLayout = this.paneLayout === "split" ? "single" : "split";
+    this.focusedPane = this.paneLayout === "single" ? "right" : "left";
+    this.tui.requestRender();
+  }
+
   private leaveRepo() {
     this.saveCurrentPreviewScroll();
     this.gitSubmode = "repo-picker";
     this.currentDir = this.cwd;
     this.selectedPath = this.selectedRepoPath;
     this.focusedPane = "left";
-    this.clearFilter();
     this.loadFiles();
   }
 
@@ -954,7 +995,6 @@ export class FileViewOverlay implements Focusable {
     this.currentDir = repoPath;
     this.selectedPath = null;
     this.focusedPane = "left";
-    this.clearFilter();
     this.loadFiles();
   }
 
@@ -1049,22 +1089,24 @@ export class FileViewOverlay implements Focusable {
 
   private handleRightPaneInput(data: string) {
     const viewportHeight = this.contentHeight || 20;
+    const lineStep = 3;
+    const pageStep = Math.max(1, viewportHeight * 2);
     if (matchesKey(data, "up")) {
-      this.scrollRightBy(-1);
+      this.scrollRightBy(-lineStep);
     } else if (matchesKey(data, "down")) {
-      this.scrollRightBy(1);
+      this.scrollRightBy(lineStep);
     } else if (matchesKey(data, "pageUp")) {
-      this.scrollRightBy(-viewportHeight);
+      this.scrollRightBy(-pageStep);
     } else if (matchesKey(data, "pageDown")) {
-      this.scrollRightBy(viewportHeight);
+      this.scrollRightBy(pageStep);
     } else if (matchesKey(data, "home") || matchesKey(data, "ctrl+a")) {
       this.scrollRightTo(0);
     } else if (matchesKey(data, "end") || matchesKey(data, "ctrl+e")) {
       this.scrollRightTo(this.maxRightScroll());
     } else if (matchesKey(data, "ctrl+u")) {
-      this.scrollRightBy(-Math.max(1, Math.floor(viewportHeight / 2)));
+      this.scrollRightBy(-pageStep);
     } else if (matchesKey(data, "ctrl+d")) {
-      this.scrollRightBy(Math.max(1, Math.floor(viewportHeight / 2)));
+      this.scrollRightBy(pageStep);
     }
   }
 
@@ -1088,18 +1130,24 @@ export class FileViewOverlay implements Focusable {
   render(width: number): string[] {
     const dialogWidth = Math.max(40, width);
     const innerWidth = dialogWidth - 2;
-    const leftWidth = Math.floor(innerWidth * 0.35);
-    const rightWidth = innerWidth - leftWidth - 1;
+    const splitLeftWidth = Math.floor(innerWidth * 0.30);
+    const splitRightWidth = innerWidth - splitLeftWidth - 1;
+    const leftWidth = this.paneLayout === "split" ? splitLeftWidth : 0;
+    const rightWidth = this.paneLayout === "split" ? splitRightWidth : innerWidth;
     const rows = process.stdout.rows ?? 30;
-    const showFilter = this.filterMode || this.filterQuery.length > 0;
-    const chromeLines = showFilter ? 7 : 6;
     const dialogHeight = Math.max(12, Math.min(rows - 2, Math.floor(rows * 0.94)));
-    const contentHeight = Math.max(4, dialogHeight - chromeLines);
+    const contentHeight = Math.max(4, dialogHeight - 6);
     this.contentHeight = contentHeight;
 
     if (this.markdownPreview && this.markdownPreviewWidth !== rightWidth) {
       const file = this.selectedFile();
       this.renderMarkdownPreview(rightWidth, file?.name ?? "markdown file");
+      this.restorePreviewScroll(file?.path ?? null);
+    }
+
+    if (this.diffPreview && this.diffPreviewWidth !== rightWidth) {
+      const file = this.selectedFile();
+      this.renderDiffPreview(rightWidth);
       this.restorePreviewScroll(file?.path ?? null);
     }
 
@@ -1126,33 +1174,33 @@ export class FileViewOverlay implements Focusable {
     const headerPad = Math.max(0, innerWidth - visibleWidth(header));
     lines.push(`${th.fg("borderMuted", "│")}${header}${" ".repeat(headerPad)}${th.fg("borderMuted", "│")}`);
 
-    if (showFilter) {
-      const filterContent = this.filterMode
-        ? `/${this.filterInput.render(Math.max(1, innerWidth - 1))[0] ?? ""}`
-        : this.theme.fg("dim", truncateToWidth(`/${this.filterQuery}`, innerWidth));
-      const filterLine = truncateToWidth(filterContent, innerWidth);
-      const filterPad = Math.max(0, innerWidth - visibleWidth(filterLine));
-      lines.push(`${th.fg("borderMuted", "│")}${filterLine}${" ".repeat(filterPad)}${th.fg("borderMuted", "│")}`);
+    if (this.paneLayout === "split") {
+      const sepMid = this.focusedPane === "right" ? th.fg("accent", "┬") : th.fg("borderMuted", "┬");
+      lines.push(th.fg("borderMuted", `├${"─".repeat(leftWidth)}`) + sepMid + th.fg("borderMuted", `${"─".repeat(rightWidth)}┤`));
+
+      for (let row = 0; row < contentHeight; row++) {
+        const leftLine = this.renderLeftLine(row, leftWidth, contentHeight);
+        const rightLine = this.renderRightLine(row, rightWidth, contentHeight);
+        const paneDivider = this.focusedPane === "right" ? th.fg("accent", "│") : th.fg("borderMuted", "│");
+        lines.push(`${th.fg("borderMuted", "│")}${leftLine}${paneDivider}${rightLine}${th.fg("borderMuted", "│")}`);
+      }
+
+      const botMid = this.focusedPane === "right" ? th.fg("accent", "┴") : th.fg("borderMuted", "┴");
+      lines.push(th.fg("borderMuted", `├${"─".repeat(leftWidth)}`) + botMid + th.fg("borderMuted", `${"─".repeat(rightWidth)}┤`));
+    } else {
+      lines.push(th.fg("borderMuted", `├${"─".repeat(innerWidth)}┤`));
+      for (let row = 0; row < contentHeight; row++) {
+        const rightLine = this.renderRightLine(row, rightWidth, contentHeight);
+        lines.push(`${th.fg("borderMuted", "│")}${rightLine}${th.fg("borderMuted", "│")}`);
+      }
+      lines.push(th.fg("borderMuted", `├${"─".repeat(innerWidth)}┤`));
     }
-
-    const sepMid = this.focusedPane === "right" ? th.fg("accent", "┬") : th.fg("borderMuted", "┬");
-    lines.push(th.fg("borderMuted", `├${"─".repeat(leftWidth)}`) + sepMid + th.fg("borderMuted", `${"─".repeat(rightWidth)}┤`));
-
-    for (let row = 0; row < contentHeight; row++) {
-      const leftLine = this.renderLeftLine(row, leftWidth, contentHeight);
-      const rightLine = this.renderRightLine(row, rightWidth, contentHeight);
-      const paneDivider = this.focusedPane === "right" ? th.fg("accent", "│") : th.fg("borderMuted", "│");
-      lines.push(`${th.fg("borderMuted", "│")}${leftLine}${paneDivider}${rightLine}${th.fg("borderMuted", "│")}`);
-    }
-
-    const botMid = this.focusedPane === "right" ? th.fg("accent", "┴") : th.fg("borderMuted", "┴");
-    lines.push(th.fg("borderMuted", `├${"─".repeat(leftWidth)}`) + botMid + th.fg("borderMuted", `${"─".repeat(rightWidth)}┤`));
 
     let hints = this.mode === "tree"
-      ? " ↑↓ wrap · PgUp/PgDn fast nav · Enter/l open · h/← up · / filter · Tab pane · Esc close "
+      ? ` ↑↓ · Ctrl+U/D · g git · v ${this.paneLayout === "split" ? "single" : "split"} · Tab pane · Esc close `
       : this.gitSubmode === "repo-picker"
-        ? " ↑↓ wrap · Enter open repo · / filter · Tab pane · t tree · Esc close "
-        : " ↑↓ wrap · PgUp/PgDn/Home/End scroll · Ctrl+U/D half-page · a all · c changes · r repos · / filter ";
+        ? ` ↑↓ wrap · Enter open repo · v ${this.paneLayout === "split" ? "single" : "split"} · Tab pane · t tree · Esc close `
+        : ` ↑↓ · Ctrl+U/D · a all · c changes · v ${this.paneLayout === "split" ? "single" : "split"} · Tab pane · Esc close `;
     const footer = th.fg("dim", truncateToWidth(hints, innerWidth));
     const footerPad = Math.max(0, innerWidth - visibleWidth(footer));
     lines.push(`${th.fg("borderMuted", "│")}${footer}${" ".repeat(footerPad)}${th.fg("borderMuted", "│")}`);
@@ -1232,6 +1280,14 @@ export class FileViewOverlay implements Focusable {
     return `${status}${kind}`;
   }
 
+  private getLineNumberPrefix(lineIndex: number): string {
+    if (!this.showLineNumbers) return "";
+    const maxLines = Math.max(1, this.previewContent.length);
+    const width = maxLines.toString().length;
+    const num = (lineIndex + 1).toString().padStart(width, " ");
+    return this.theme.fg("dim", `${num} │ `);
+  }
+
   private renderRightLine(row: number, width: number, _contentHeight: number): string {
     const lineIndex = this.rightScroll + row;
     const line = this.previewContent[lineIndex];
@@ -1239,11 +1295,15 @@ export class FileViewOverlay implements Focusable {
       return " ".repeat(width);
     }
 
-    let display = truncateToWidth(line, width);
-    if (visibleWidth(display) < width) {
-      display += " ".repeat(width - visibleWidth(display));
+    const prefix = this.getLineNumberPrefix(lineIndex);
+    const prefixWidth = visibleWidth(prefix);
+    const contentWidth = Math.max(0, width - prefixWidth);
+
+    let display = truncateToWidth(line, contentWidth);
+    if (visibleWidth(display) < contentWidth) {
+      display += " ".repeat(contentWidth - visibleWidth(display));
     }
-    return display;
+    return prefix + display;
   }
 
   private center(text: string, width: number): string {

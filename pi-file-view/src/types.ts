@@ -4,11 +4,12 @@ export type GitSubmode = "repo-picker" | "repo-tree";
 
 export type GitTreeScope = "changes" | "all";
 
+export type PaneLayout = "split" | "single";
+
 export interface FileEntry {
   path: string;
   name: string;
   isDirectory: boolean;
-  gitStatus?: string; // M, A, D, ??, etc.
   relativePath?: string;
   repoPath?: string;
   isRepo?: boolean;
@@ -22,10 +23,10 @@ export interface FileEntry {
 export interface OverlaySessionState {
   mode: FileViewMode;
   focusedPane: "left" | "right";
+  paneLayout: PaneLayout;
   currentDir: string;
   selectedPath: string | null;
   leftScroll: number;
-  filterQuery: string;
   selectedRepoPath: string | null;
   gitSubmode: GitSubmode;
   gitTreeScope: GitTreeScope;
