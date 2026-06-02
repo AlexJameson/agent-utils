@@ -7,15 +7,15 @@ Pi extension that shows live token-per-second generation speed in the status bar
 ### From GitHub
 
 ```bash
-pi install git:github.com/your-username/agent-utils
+pi install git:github.com/AlexJameson/agent-utils
 ```
 
 Or with a pinned ref:
 ```bash
-pi install git:github.com/your-username/agent-utils@main
+pi install git:github.com/AlexJameson/agent-utils@main
 ```
 
-### Manual copy
+### Manual copy after cloning
 
 ```bash
 cp -r plugins/tps-tracker ~/.pi/agent/extensions/
