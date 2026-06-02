@@ -1,38 +1,8 @@
-# Навыки для агентов
+# Agent Utils
 
-Этот каталог содержит навыки по стандарту [Agent Skills](https://agentskills.io/home), расширяющие возможности различных агентов, которыми я пользуюсь, например OpenCode, Nanobot и Kimi Code CLI, а также для любых других агентов, поддерживающих Agent Skills.
+A collection of tools, skills, and Pi extensions.
 
----
+## Contents
 
-## print-image-prep
-
-Навык для обработки и повышения качества изображений. С помощью Python в CLI, локально, на любой ОС.
-
-### Какую проблему решает
-
-Подготовка коллекций изображений для высококачественной печати часто требует рутинной проверки разрешения, DPI и формата каждого файла. Малоформатные изображения нужно увеличивать, у крупных исправлять метаданные, а неподходящие форматы конвертировать в нужный стандарт. Навык автоматизирует весь процесс от анализа до финального экспорта в JPEG. Навык не предполагает экспорт в CMYK, но обработанные изображения легко сконвертировать вручную.
-
-### Обзор решения
-
-Навык анализирует изображения и распределяет их по категориям готовности к печати. Для малоформатных изображений выполняется апскейл методом [Ланцоша](https://ru.wikipedia.org/wiki/Фильтр_Ланцоша). Для всех файлов выставляется значение DPI 300 и конвертируется цветовой режим в RGB. Результат сохраняется в виде JPEG без полей с сохранением исходного соотношения сторон.
-
-```
-  analyze   ->  classify   ->   process    ->   assess
-  (inventory)   (tier A-E)      (resize/DPI)    (metrics)
-       |             |               |              |
-       v             v               v              v
-   dimensions   A/B: pass     RGB convert    visual check
-   DPI data     C: lanczos    300 DPI set    sharpness
-   format       D: AI/opt     JPEG export    no-reference
-                E: flag                      full-reference
-```
-
-### Требования
-
-Для работы необходим Python 3. Агент автоматически проверит наличие [Pillow](https://pillow.readthedocs.io/en/stable/index.html) и предлагает установить ее при первом использовании навыка. Предусмотрена опциональная установка [piq](https://pypi.org/project/piq/) и [numpy](https://numpy.org/) для оценки качества через метрики [BRISQUE](https://learnopencv.com/image-quality-assessment-brisque/) и [NIQE](https://www.mathworks.com/help/images/ref/niqe.html). Для AI-апскейла (для наименее качественных изображений) потребуется скачанный бинарный файл [realesrgan-ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan).
-
-Метрики качества используются агентом при категоризации изображений. Подробнее о категориях и способах оптимизации в `SKILL.md`.
-
-### Как использовать
-
-Опишите агенту задачу по подготовке изображений к печати, например: «Подготовь эти фото для печати в 300 DPI». Агент самостоятельно запустит `analyze.py` для анализа изображений, `process.py` для обработки и при необходимости `assess.py` для оценки качества. Скрипты также можно запускать вручную из терминала, если требуется более точный контроль параметров.
+- **[`pi-file-view/`](pi-file-view/README.md)** — Pi extension for browsing files and git diffs in a terminal overlay.
+- **[`skills/print-image-prep/`](skills/print-image-prep/README.md)** — Skill for preparing image collections for high-quality printing.
