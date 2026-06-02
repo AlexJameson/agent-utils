@@ -1,0 +1,11 @@
+{
+  "name": "agent-utils",
+  "private": true,
+  "pi": {
+    "extensions": [
+      "./plugins/pi-file-view",
+      "./plugins/tps-tracker"
+    ],
+    "skills": ["./skills"]
+  }
+}
