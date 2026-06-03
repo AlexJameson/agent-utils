@@ -1,0 +1,11 @@
+{
+  "name": "pi-extension-skill",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Minimal skill for building and debugging Pi extensions and skills",
+  "pi": {
+    "skills": [
+      "./"
+    ]
+  }
+}

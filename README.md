@@ -7,3 +7,4 @@ A collection of tools, skills, and extensions.
 - **[`plugins/pi-file-view/`](plugins/pi-file-view/README.md)** — Extension for browsing files and git diffs in a terminal overlay.
 - **[`plugins/tps-tracker/`](plugins/tps-tracker/README.md)** — Extension that shows live token-per-second generation speed in the status bar.
 - **[`skills/print-image-prep/`](skills/print-image-prep/README.md)** — Skill for preparing image collections for high-quality printing.
+- **[`skills/pi-extension/`](skills/pi-extension/README.md)** — Minimal skill for building and debugging Pi extensions and Pi skills.

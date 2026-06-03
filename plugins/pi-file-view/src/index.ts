@@ -62,8 +62,9 @@ export default function (pi: ExtensionAPI) {
       {
         overlay: true,
         overlayOptions: {
-          width: "98%",
-          margin: 1,
+          width: "100%",
+          maxHeight: "100%",
+          margin: 0,
         },
       },
     );

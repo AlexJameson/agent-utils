@@ -1,5 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
+  Input,
   Markdown,
   type MarkdownTheme,
   type Focusable,
@@ -8,12 +9,13 @@ import {
   matchesKey,
   truncateToWidth,
   visibleWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 
-import type { FileEntry, FileViewMode, GitSubmode, GitTreeScope, OverlaySessionState, PaneLayout } from "./types.js";
+import type { DiffLayout, FileEntry, FileViewMode, GitSubmode, GitTreeScope, MarkdownPreviewMode, OverlaySessionState } from "./types.js";
 
 interface FileViewOptions {
   tui: TUI;
@@ -40,6 +42,17 @@ interface DiffPreviewState {
   rawDiff: string;
 }
 
+interface WrappedPreviewState {
+  lines: string[];
+  wrap: boolean;
+  lineNumbers: Array<string | null>;
+}
+
+interface RenderedPreview {
+  lines: string[];
+  lineNumbers: Array<string | null>;
+}
+
 export class FileViewOverlay implements Focusable {
   private tui: TUI;
   private theme: Theme;
@@ -50,7 +63,8 @@ export class FileViewOverlay implements Focusable {
 
   private mode: FileViewMode;
   private focusedPane: "left" | "right" = "left";
-  private paneLayout: PaneLayout = "split";
+  private diffLayout: DiffLayout = "side-by-side";
+  private markdownPreviewMode: MarkdownPreviewMode = "rendered";
   private leftScroll = 0;
   private rightScroll = 0;
   private selectedIndex = 0;
@@ -58,6 +72,13 @@ export class FileViewOverlay implements Focusable {
   private allFiles: FileEntry[] = [];
   private visibleFiles: FileEntry[] = [];
   private previewContent: string[] = [];
+  private previewLineNumbers: Array<string | null> = [];
+  private previewLineNumberWidth = 0;
+  private textPreview: WrappedPreviewState | null = null;
+  private textPreviewWidth = 0;
+  private filterInput: Input | null = null;
+  private filterMode = false;
+  private filterQuery = "";
   private markdownPreview: Markdown | null = null;
   private markdownPreviewWidth = 0;
   private diffPreview: DiffPreviewState | null = null;
@@ -88,7 +109,8 @@ export class FileViewOverlay implements Focusable {
     const initialState = options.initialState;
     this.mode = options.initialMode;
     this.focusedPane = initialState?.focusedPane ?? "left";
-    this.paneLayout = initialState?.paneLayout ?? "split";
+    this.diffLayout = initialState?.diffLayout ?? "side-by-side";
+    this.markdownPreviewMode = initialState?.markdownPreviewMode ?? "rendered";
     this.currentDir = initialState?.currentDir ?? options.cwd;
     this.leftScroll = initialState?.leftScroll ?? 0;
     this.selectedPath = initialState?.selectedPath ?? null;
@@ -97,10 +119,6 @@ export class FileViewOverlay implements Focusable {
     this.gitTreeScope = initialState?.gitTreeScope ?? "changes";
     this.gitBaseRef = initialState?.gitBaseRef ?? null;
     this.rightScrollByPath = { ...(initialState?.rightScrollByPath ?? {}) };
-
-    if (this.paneLayout === "single") {
-      this.focusedPane = "right";
-    }
 
     if (this.mode === "git" && this.selectedRepoPath && !this.isRepoDirectory(this.selectedRepoPath)) {
       this.selectedRepoPath = null;
@@ -122,7 +140,8 @@ export class FileViewOverlay implements Focusable {
     return {
       mode: this.mode,
       focusedPane: this.focusedPane,
-      paneLayout: this.paneLayout,
+      diffLayout: this.diffLayout,
+      markdownPreviewMode: this.markdownPreviewMode,
       currentDir: this.currentDir,
       selectedPath: this.selectedPath ?? this.selectedFile()?.path ?? null,
       leftScroll: this.leftScroll,
@@ -159,18 +178,67 @@ export class FileViewOverlay implements Focusable {
     }
 
     try {
-      this.previewContent = this.markdownPreview.render(Math.max(1, width));
+      const lines = this.markdownPreview?.render(Math.max(1, width)) ?? [];
+      this.setRenderedPreview(lines);
       this.markdownPreviewWidth = Math.max(1, width);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.markdownPreview = null;
       this.markdownPreviewWidth = 0;
-      this.previewContent = [
+      this.setTextPreview([
         this.theme.fg("error", `Cannot render ${fileName}`),
         "",
         this.theme.fg("dim", message),
-      ];
+      ]);
     }
+  }
+
+  private setRenderedPreview(lines: string[], lineNumbers?: Array<string | null>) {
+    this.previewContent = lines;
+    this.previewLineNumbers = lineNumbers ?? Array.from({ length: lines.length }, () => null);
+    const widths = this.previewLineNumbers
+      .filter((value): value is string => value !== null)
+      .map((value) => value.length);
+    this.previewLineNumberWidth = widths.length > 0 ? Math.max(...widths) : 0;
+    this.showLineNumbers = this.previewLineNumberWidth > 0;
+  }
+
+  private setTextPreview(lines: string[], options: { wrap?: boolean; lineNumbers?: Array<string | null> } = {}) {
+    this.textPreview = {
+      lines,
+      wrap: options.wrap ?? true,
+      lineNumbers: options.lineNumbers ?? Array.from({ length: lines.length }, () => null),
+    };
+    this.renderTextPreview(1);
+  }
+
+  private renderTextPreview(width: number) {
+    if (!this.textPreview) {
+      return;
+    }
+
+    const targetWidth = Math.max(1, width);
+    const labelWidth = Math.max(
+      0,
+      ...this.textPreview.lineNumbers.filter((value): value is string => value !== null).map((value) => value.length),
+    );
+    const contentWidth = Math.max(1, targetWidth - (labelWidth > 0 ? labelWidth + 3 : 0));
+    const rendered: string[] = [];
+    const renderedLineNumbers: Array<string | null> = [];
+
+    for (let index = 0; index < this.textPreview.lines.length; index++) {
+      const line = this.textPreview.lines[index];
+      const lineNumber = this.textPreview.lineNumbers[index] ?? null;
+      const wrapped = this.textPreview.wrap ? wrapTextWithAnsi(line, contentWidth) : [line];
+
+      for (let chunkIndex = 0; chunkIndex < wrapped.length; chunkIndex++) {
+        rendered.push(wrapped[chunkIndex] ?? "");
+        renderedLineNumbers.push(chunkIndex === 0 ? lineNumber : null);
+      }
+    }
+
+    this.setRenderedPreview(rendered, renderedLineNumbers);
+    this.textPreviewWidth = targetWidth;
   }
 
   private renderDiffPreview(width: number) {
@@ -178,12 +246,23 @@ export class FileViewOverlay implements Focusable {
       return;
     }
 
-    this.previewContent = this.buildSideBySideDiff(
-      this.diffPreview.title,
-      this.diffPreview.relPath,
-      this.diffPreview.rawDiff,
-      Math.max(1, width),
-    );
+    const targetWidth = Math.max(1, width);
+    if (this.diffLayout === "side-by-side") {
+      this.setRenderedPreview(this.buildSideBySideDiff(
+        this.diffPreview.title,
+        this.diffPreview.relPath,
+        this.diffPreview.rawDiff,
+        targetWidth,
+      ));
+    } else {
+      const rendered = this.buildUnifiedDiff(
+        this.diffPreview.title,
+        this.diffPreview.relPath,
+        this.diffPreview.rawDiff,
+        targetWidth,
+      );
+      this.setRenderedPreview(rendered.lines, rendered.lineNumbers);
+    }
     this.diffPreviewWidth = Math.max(1, width);
   }
 
@@ -200,6 +279,8 @@ export class FileViewOverlay implements Focusable {
   }
 
   private loadFiles() {
+    this.clearFilterState();
+
     if (this.mode === "tree") {
       this.loadTreeFiles();
     } else if (this.gitSubmode === "repo-picker" || !this.selectedRepoPath) {
@@ -216,7 +297,10 @@ export class FileViewOverlay implements Focusable {
   }
 
   private refreshVisibleFiles() {
-    this.visibleFiles = [...this.allFiles];
+    const query = this.filterQuery.trim().toLowerCase();
+    this.visibleFiles = query
+      ? this.allFiles.filter((file) => file.name.toLowerCase().includes(query))
+      : [...this.allFiles];
 
     this.restoreSelection();
   }
@@ -233,10 +317,80 @@ export class FileViewOverlay implements Focusable {
       ? this.visibleFiles.findIndex((file) => file.path === this.selectedPath)
       : -1;
 
-    this.selectedIndex = savedIndex >= 0 ? savedIndex : Math.min(this.selectedIndex, this.visibleFiles.length - 1);
+    this.selectedIndex = savedIndex >= 0 ? savedIndex : 0;
     this.selectedPath = this.visibleFiles[this.selectedIndex]?.path ?? null;
     this.leftScroll = Math.max(0, Math.min(this.leftScroll, Math.max(0, this.visibleFiles.length - 1)));
     this.adjustLeftScroll();
+  }
+
+  private clearFilterState() {
+    this.filterMode = false;
+    this.filterQuery = "";
+    if (this.filterInput) {
+      this.filterInput.setValue("");
+      this.filterInput.focused = false;
+    }
+  }
+
+  private beginFilterMode() {
+    this.focusedPane = "left";
+    this.filterMode = true;
+    if (!this.filterInput) {
+      this.filterInput = new Input();
+    }
+    this.filterInput.setValue(this.filterQuery);
+    this.filterInput.focused = true;
+    this.tui.requestRender();
+  }
+
+  private endFilterMode(clearQuery: boolean) {
+    this.filterMode = false;
+    if (this.filterInput) {
+      this.filterInput.focused = false;
+    }
+    if (clearQuery) {
+      this.filterQuery = "";
+      if (this.filterInput) {
+        this.filterInput.setValue("");
+      }
+      this.refreshVisibleFiles();
+      this.loadPreview();
+    }
+    this.tui.requestRender();
+  }
+
+  private handleFilterInput(data: string) {
+    if (data === "\u001b" || matchesKey(data, "escape")) {
+      this.endFilterMode(true);
+      return;
+    }
+
+    if (matchesKey(data, "return")) {
+      this.endFilterMode(false);
+      return;
+    }
+
+    if (matchesKey(data, "up") || matchesKey(data, "down") || matchesKey(data, "pageUp") || matchesKey(data, "pageDown") || matchesKey(data, "home") || matchesKey(data, "end")) {
+      this.endFilterMode(false);
+      this.handleLeftPaneInput(data);
+      return;
+    }
+
+    if (matchesKey(data, "tab")) {
+      this.endFilterMode(false);
+      this.focusedPane = "right";
+      this.tui.requestRender();
+      return;
+    }
+
+    if (!this.filterInput) {
+      this.filterInput = new Input();
+    }
+
+    this.filterInput.handleInput(data);
+    this.filterQuery = this.filterInput.getValue();
+    this.refreshVisibleFiles();
+    this.loadPreview();
   }
 
   private loadTreeFiles() {
@@ -647,16 +801,20 @@ export class FileViewOverlay implements Focusable {
   }
 
   private loadPreview() {
+    this.textPreview = null;
+    this.textPreviewWidth = 0;
     this.markdownPreview = null;
     this.markdownPreviewWidth = 0;
     this.diffPreview = null;
     this.diffPreviewWidth = 0;
     this.previewContent = [];
+    this.previewLineNumbers = [];
+    this.previewLineNumberWidth = 0;
     this.showLineNumbers = false;
 
     const file = this.selectedFile();
     if (!file) {
-      this.previewContent = [this.theme.fg("dim", "No file selected")];
+      this.setTextPreview([this.theme.fg("dim", "No file selected")]);
       this.restorePreviewScroll(null);
       this.tui.requestRender();
       return;
@@ -665,19 +823,19 @@ export class FileViewOverlay implements Focusable {
     this.selectedPath = file.path;
 
     if (this.mode === "tree") {
-      if (!file.isDirectory && file.name.endsWith(".md")) {
+      if (this.isMarkdownFile(file) && this.markdownPreviewMode === "rendered") {
         this.loadMarkdownPreview(file);
       } else {
         this.loadFilePreview(file);
       }
     } else if (this.gitSubmode === "repo-picker") {
-      this.previewContent = [
+      this.setTextPreview([
         this.theme.fg("accent", file.name),
         "",
         this.theme.fg("dim", file.path),
         "",
         this.theme.fg("dim", "Enter to open repository"),
-      ];
+      ]);
     } else {
       this.loadGitPreview(file);
     }
@@ -686,18 +844,21 @@ export class FileViewOverlay implements Focusable {
     this.tui.requestRender();
   }
 
+  private isMarkdownFile(file: FileEntry | undefined): boolean {
+    return Boolean(file && !file.isDirectory && file.name.endsWith(".md"));
+  }
+
   private loadMarkdownPreview(file: FileEntry) {
     try {
-      this.showLineNumbers = true;
       const content = readFileSync(file.path, "utf8");
       if (content === "") {
-        this.previewContent = [this.theme.fg("dim", "(empty file)")];
+        this.setTextPreview([this.theme.fg("dim", "(empty file)")]);
         return;
       }
 
       const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
       if (!normalized.split("\n").some((line) => line.trim().length > 0)) {
-        this.previewContent = [this.theme.fg("dim", "(blank file)")];
+        this.setTextPreview([this.theme.fg("dim", "(blank file)")]);
         return;
       }
 
@@ -707,53 +868,51 @@ export class FileViewOverlay implements Focusable {
       this.renderMarkdownPreview(1, file.name);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.previewContent = [
+      this.setTextPreview([
         this.theme.fg("error", `Cannot read ${file.name}`),
         "",
         this.theme.fg("dim", message),
-      ];
+      ]);
     }
   }
 
   private loadFilePreview(file: FileEntry) {
     if (file.isDirectory) {
       if (file.name === "..") {
-        this.previewContent = [
+        this.setTextPreview([
           this.theme.fg("dim", "Parent directory"),
           "",
           this.theme.fg("accent", "Enter / h / ←") + this.theme.fg("dim", " to navigate"),
-        ];
+        ]);
       } else {
-        this.previewContent = [
+        this.setTextPreview([
           this.theme.fg("dim", `Directory: ${file.name}`),
           "",
           this.theme.fg("accent", "Enter / l / →") + this.theme.fg("dim", " to open"),
-        ];
+        ]);
       }
       return;
     }
 
-    this.showLineNumbers = true;
-
     try {
       const content = readFileSync(file.path, "utf8");
       if (content === "") {
-        this.previewContent = [this.theme.fg("dim", "(empty file)")];
+        this.setTextPreview([this.theme.fg("dim", "(empty file)")], { lineNumbers: ["1"] });
         return;
       }
       const lines = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
       if (!lines.some((line) => line.trim().length > 0)) {
-        this.previewContent = [this.theme.fg("dim", "(blank file)")];
+        this.setTextPreview([this.theme.fg("dim", "(blank file)")], { lineNumbers: ["1"] });
         return;
       }
-      this.previewContent = lines;
+      this.setTextPreview(lines, { lineNumbers: lines.map((_, index) => String(index + 1)) });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.previewContent = [
+      this.setTextPreview([
         this.theme.fg("error", `Cannot read ${file.name}`),
         "",
         this.theme.fg("dim", message),
-      ];
+      ]);
     }
   }
 
@@ -766,7 +925,7 @@ export class FileViewOverlay implements Focusable {
     const repoPath = this.selectedRepoPath;
     const relPath = file.relativePath;
     if (!repoPath || !relPath) {
-      this.previewContent = [this.theme.fg("error", "Repository context missing")];
+      this.setTextPreview([this.theme.fg("error", "Repository context missing")]);
       return;
     }
 
@@ -797,8 +956,33 @@ export class FileViewOverlay implements Focusable {
   }
 
   private loadGitFilePreview(file: FileEntry, title: string) {
-    this.loadFilePreview(file);
-    this.previewContent = [this.theme.fg("accent", title), "", ...this.previewContent];
+    if (file.isDirectory) {
+      this.loadFilePreview(file);
+      return;
+    }
+
+    try {
+      const content = readFileSync(file.path, "utf8");
+      const lines = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+      const body = content === ""
+        ? [this.theme.fg("dim", "(empty file)")]
+        : lines.some((line) => line.trim().length > 0)
+          ? lines
+          : [this.theme.fg("dim", "(blank file)")];
+      this.setTextPreview(
+        [this.theme.fg("accent", title), "", ...body],
+        { lineNumbers: [null, null, ...body.map((_, index) => String(index + 1))] },
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.setTextPreview([
+        this.theme.fg("accent", title),
+        "",
+        this.theme.fg("error", `Cannot read ${file.name}`),
+        "",
+        this.theme.fg("dim", message),
+      ]);
+    }
   }
 
   private loadGitDiffPreview(repoPath: string, relPath: string, title: string, gitDiffCommand: string): boolean {
@@ -810,7 +994,6 @@ export class FileViewOverlay implements Focusable {
       return false;
     }
 
-    this.showLineNumbers = true;
     this.diffPreview = {
       title,
       relPath,
@@ -820,10 +1003,103 @@ export class FileViewOverlay implements Focusable {
     return true;
   }
 
+  private wrapPrefixedLine(prefix: string, text: string, width: number): string[] {
+    const prefixWidth = visibleWidth(prefix);
+    const continuation = " ".repeat(prefixWidth);
+    const wrapped = wrapTextWithAnsi(text, Math.max(1, width - prefixWidth));
+    return wrapped.map((line, index) => `${index === 0 ? prefix : continuation}${line}`);
+  }
+
+  private padLine(text: string, width: number): string {
+    const padding = width - visibleWidth(text);
+    return text + " ".repeat(Math.max(0, padding));
+  }
+
+  private buildUnifiedDiff(title: string, relPath: string, rawDiff: string, width: number): RenderedPreview {
+    const logicalLines: Array<{ text: string; lineNumber: string | null }> = [
+      { text: this.theme.fg("accent", title), lineNumber: null },
+      { text: this.theme.fg("dim", relPath), lineNumber: null },
+      { text: "", lineNumber: null },
+    ];
+    let oldLine: number | null = null;
+    let newLine: number | null = null;
+
+    for (const line of rawDiff.split("\n")) {
+      if (!line) {
+        logicalLines.push({ text: "", lineNumber: null });
+        continue;
+      }
+
+      if (line.startsWith("diff --git ") || line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ")) {
+        continue;
+      }
+
+      if (line.startsWith("@@")) {
+        const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+        oldLine = hunk ? Number(hunk[1]) : null;
+        newLine = hunk ? Number(hunk[2]) : null;
+        logicalLines.push({ text: this.theme.fg("accent", line), lineNumber: null });
+        continue;
+      }
+
+      if (line.startsWith("-")) {
+        logicalLines.push({
+          text: this.theme.fg("toolDiffRemoved", `- ${line.slice(1)}`),
+          lineNumber: oldLine === null ? null : `${oldLine}/-`,
+        });
+        if (oldLine !== null) {
+          oldLine += 1;
+        }
+        continue;
+      }
+
+      if (line.startsWith("+")) {
+        logicalLines.push({
+          text: this.theme.fg("toolDiffAdded", `+ ${line.slice(1)}`),
+          lineNumber: newLine === null ? null : `-/${newLine}`,
+        });
+        if (newLine !== null) {
+          newLine += 1;
+        }
+        continue;
+      }
+
+      const context = line.startsWith(" ") ? line.slice(1) : line;
+      logicalLines.push({
+        text: this.theme.fg("toolDiffContext", `  ${context}`),
+        lineNumber: oldLine === null || newLine === null ? null : `${oldLine}/${newLine}`,
+      });
+      if (oldLine !== null) {
+        oldLine += 1;
+      }
+      if (newLine !== null) {
+        newLine += 1;
+      }
+    }
+
+    const lineNumberWidth = Math.max(
+      0,
+      ...logicalLines.filter((item) => item.lineNumber !== null).map((item) => item.lineNumber?.length ?? 0),
+    );
+    const contentWidth = Math.max(1, width - (lineNumberWidth > 0 ? lineNumberWidth + 3 : 0));
+    const lines: string[] = [];
+    const lineNumbers: Array<string | null> = [];
+
+    for (const logicalLine of logicalLines) {
+      const wrapped = wrapTextWithAnsi(logicalLine.text, contentWidth);
+      for (let chunkIndex = 0; chunkIndex < wrapped.length; chunkIndex++) {
+        lines.push(wrapped[chunkIndex] ?? "");
+        lineNumbers.push(chunkIndex === 0 ? logicalLine.lineNumber : null);
+      }
+    }
+
+    return { lines, lineNumbers };
+  }
+
   private buildSideBySideDiff(title: string, relPath: string, rawDiff: string, width: number): string[] {
     const lines: string[] = [
-      this.theme.fg("accent", title),
-      this.theme.fg("dim", relPath),
+      ...wrapTextWithAnsi(this.theme.fg("accent", title), width),
+      ...wrapTextWithAnsi(this.theme.fg("dim", relPath), width),
       "",
     ];
 
@@ -838,13 +1114,21 @@ export class FileViewOverlay implements Focusable {
       for (let i = 0; i < pairCount; i++) {
         const left = pendingRemoved[i] ?? "";
         const right = pendingAdded[i] ?? "";
-        const leftText = left
-          ? this.theme.fg("toolDiffRemoved", truncateToWidth(`- ${left}`, columnWidth, "...", true))
-          : " ".repeat(columnWidth);
-        const rightText = right
-          ? this.theme.fg("toolDiffAdded", truncateToWidth(`+ ${right}`, columnWidth, "...", true))
-          : " ".repeat(columnWidth);
-        lines.push(`${leftText}${separator}${rightText}`);
+        const leftChunks = left ? this.wrapPrefixedLine("- ", left, columnWidth) : [""];
+        const rightChunks = right ? this.wrapPrefixedLine("+ ", right, columnWidth) : [""];
+        const rowCount = Math.max(leftChunks.length, rightChunks.length);
+
+        for (let row = 0; row < rowCount; row++) {
+          const leftChunk = leftChunks[row] ?? "";
+          const rightChunk = rightChunks[row] ?? "";
+          const leftText = leftChunk
+            ? this.theme.fg("toolDiffRemoved", this.padLine(leftChunk, columnWidth))
+            : " ".repeat(columnWidth);
+          const rightText = rightChunk
+            ? this.theme.fg("toolDiffAdded", this.padLine(rightChunk, columnWidth))
+            : " ".repeat(columnWidth);
+          lines.push(`${leftText}${separator}${rightText}`);
+        }
       }
       pendingRemoved.length = 0;
       pendingAdded.length = 0;
@@ -863,7 +1147,7 @@ export class FileViewOverlay implements Focusable {
 
       if (line.startsWith("@@")) {
         flushPending();
-        lines.push(this.theme.fg("accent", truncateToWidth(line, width, "...", true)));
+        lines.push(...wrapTextWithAnsi(this.theme.fg("accent", line), width).map((item) => this.padLine(item, width)));
         continue;
       }
 
@@ -879,7 +1163,7 @@ export class FileViewOverlay implements Focusable {
 
       flushPending();
       const context = line.startsWith(" ") ? line.slice(1) : line;
-      lines.push(this.theme.fg("toolDiffContext", truncateToWidth(`  ${context}`, width, "...", true)));
+      lines.push(...this.wrapPrefixedLine("  ", context, width).map((item) => this.theme.fg("toolDiffContext", this.padLine(item, width))));
     }
 
     flushPending();
@@ -888,6 +1172,11 @@ export class FileViewOverlay implements Focusable {
 
   handleInput(data: string): void {
     if (this.closed) return;
+
+    if (this.filterMode) {
+      this.handleFilterInput(data);
+      return;
+    }
 
     if (data === "\u001b") {
       this.close();
@@ -904,13 +1193,28 @@ export class FileViewOverlay implements Focusable {
       return;
     }
 
-    if (data === "v" || data === "V") {
-      this.togglePaneLayout();
+    if (data === "/") {
+      this.beginFilterMode();
+      return;
+    }
+
+    if (this.mode === "tree" && (data === "v" || data === "V") && this.isMarkdownFile(this.selectedFile())) {
+      this.toggleMarkdownPreviewMode();
+      return;
+    }
+
+    if (this.mode === "git" && this.gitSubmode === "repo-tree" && (data === "v" || data === "V")) {
+      this.toggleDiffLayout();
       return;
     }
 
     if (data === "g" || data === "G") {
       this.switchMode("git");
+      return;
+    }
+
+    if (this.mode === "git" && (data === "r" || data === "R")) {
+      this.toggleRepoTree();
       return;
     }
 
@@ -925,18 +1229,9 @@ export class FileViewOverlay implements Focusable {
         this.loadFiles();
         return;
       }
-      if (data === "r" || data === "R") {
-        this.leaveRepo();
-        return;
-      }
     }
 
     if (matchesKey(data, "tab")) {
-      if (this.paneLayout === "single") {
-        this.focusedPane = "right";
-        this.tui.requestRender();
-        return;
-      }
       this.focusedPane = this.focusedPane === "left" ? "right" : "left";
       this.tui.requestRender();
       return;
@@ -971,10 +1266,36 @@ export class FileViewOverlay implements Focusable {
     this.loadFiles();
   }
 
-  private togglePaneLayout() {
-    this.paneLayout = this.paneLayout === "split" ? "single" : "split";
-    this.focusedPane = this.paneLayout === "single" ? "right" : "left";
+  private toggleDiffLayout() {
+    this.diffLayout = this.diffLayout === "side-by-side" ? "unified" : "side-by-side";
+    if (this.diffPreview) {
+      this.renderDiffPreview(this.diffPreviewWidth || 1);
+      this.restorePreviewScroll(this.selectedFile()?.path ?? null);
+    }
     this.tui.requestRender();
+  }
+
+  private toggleMarkdownPreviewMode() {
+    if (this.mode !== "tree" || !this.isMarkdownFile(this.selectedFile())) {
+      return;
+    }
+
+    this.saveCurrentPreviewScroll();
+    this.markdownPreviewMode = this.markdownPreviewMode === "rendered" ? "raw" : "rendered";
+    this.loadPreview();
+  }
+
+  private toggleRepoTree() {
+    if (this.gitSubmode === "repo-tree") {
+      this.leaveRepo();
+      return;
+    }
+
+    const selectedRepo = this.selectedFile();
+    const repoPath = selectedRepo?.isRepo ? selectedRepo.path : this.selectedRepoPath;
+    if (repoPath && this.isRepoDirectory(repoPath)) {
+      this.enterRepo(repoPath);
+    }
   }
 
   private leaveRepo() {
@@ -1132,12 +1453,19 @@ export class FileViewOverlay implements Focusable {
     const innerWidth = dialogWidth - 2;
     const splitLeftWidth = Math.floor(innerWidth * 0.30);
     const splitRightWidth = innerWidth - splitLeftWidth - 1;
-    const leftWidth = this.paneLayout === "split" ? splitLeftWidth : 0;
-    const rightWidth = this.paneLayout === "split" ? splitRightWidth : innerWidth;
+    const leftWidth = splitLeftWidth;
+    const rightWidth = splitRightWidth;
     const rows = process.stdout.rows ?? 30;
-    const dialogHeight = Math.max(12, Math.min(rows - 2, Math.floor(rows * 0.94)));
-    const contentHeight = Math.max(4, dialogHeight - 6);
+    const dialogHeight = Math.max(1, rows);
+    const showFilter = this.filterMode || this.filterQuery.length > 0;
+    const contentHeight = Math.max(1, dialogHeight - (showFilter ? 7 : 6));
     this.contentHeight = contentHeight;
+
+    if (this.textPreview && this.textPreviewWidth !== rightWidth) {
+      const file = this.selectedFile();
+      this.renderTextPreview(rightWidth);
+      this.restorePreviewScroll(file?.path ?? null);
+    }
 
     if (this.markdownPreview && this.markdownPreviewWidth !== rightWidth) {
       const file = this.selectedFile();
@@ -1174,33 +1502,38 @@ export class FileViewOverlay implements Focusable {
     const headerPad = Math.max(0, innerWidth - visibleWidth(header));
     lines.push(`${th.fg("borderMuted", "│")}${header}${" ".repeat(headerPad)}${th.fg("borderMuted", "│")}`);
 
-    if (this.paneLayout === "split") {
-      const sepMid = this.focusedPane === "right" ? th.fg("accent", "┬") : th.fg("borderMuted", "┬");
-      lines.push(th.fg("borderMuted", `├${"─".repeat(leftWidth)}`) + sepMid + th.fg("borderMuted", `${"─".repeat(rightWidth)}┤`));
-
-      for (let row = 0; row < contentHeight; row++) {
-        const leftLine = this.renderLeftLine(row, leftWidth, contentHeight);
-        const rightLine = this.renderRightLine(row, rightWidth, contentHeight);
-        const paneDivider = this.focusedPane === "right" ? th.fg("accent", "│") : th.fg("borderMuted", "│");
-        lines.push(`${th.fg("borderMuted", "│")}${leftLine}${paneDivider}${rightLine}${th.fg("borderMuted", "│")}`);
-      }
-
-      const botMid = this.focusedPane === "right" ? th.fg("accent", "┴") : th.fg("borderMuted", "┴");
-      lines.push(th.fg("borderMuted", `├${"─".repeat(leftWidth)}`) + botMid + th.fg("borderMuted", `${"─".repeat(rightWidth)}┤`));
-    } else {
-      lines.push(th.fg("borderMuted", `├${"─".repeat(innerWidth)}┤`));
-      for (let row = 0; row < contentHeight; row++) {
-        const rightLine = this.renderRightLine(row, rightWidth, contentHeight);
-        lines.push(`${th.fg("borderMuted", "│")}${rightLine}${th.fg("borderMuted", "│")}`);
-      }
-      lines.push(th.fg("borderMuted", `├${"─".repeat(innerWidth)}┤`));
+    if (showFilter) {
+      const filterInnerWidth = Math.max(1, innerWidth - 2);
+      const activeLine = this.filterMode && this.filterInput
+        ? this.filterInput.render(filterInnerWidth + 2)[0]?.slice(2) ?? ""
+        : truncateToWidth(this.filterQuery, filterInnerWidth);
+      const filterText = `${th.fg("accent", "/ ")}${activeLine}`;
+      const filterPad = Math.max(0, innerWidth - visibleWidth(filterText));
+      lines.push(`${th.fg("borderMuted", "│")}${filterText}${" ".repeat(filterPad)}${th.fg("borderMuted", "│")}`);
     }
 
-    let hints = this.mode === "tree"
-      ? ` ↑↓ · Ctrl+U/D · g git · v ${this.paneLayout === "split" ? "single" : "split"} · Tab pane · Esc close `
+    const sepMid = this.focusedPane === "right" ? th.fg("accent", "┬") : th.fg("borderMuted", "┬");
+    lines.push(th.fg("borderMuted", `├${"─".repeat(leftWidth)}`) + sepMid + th.fg("borderMuted", `${"─".repeat(rightWidth)}┤`));
+
+    for (let row = 0; row < contentHeight; row++) {
+      const leftLine = this.renderLeftLine(row, leftWidth, contentHeight);
+      const rightLine = this.renderRightLine(row, rightWidth, contentHeight);
+      const paneDivider = this.focusedPane === "right" ? th.fg("accent", "│") : th.fg("borderMuted", "│");
+      lines.push(`${th.fg("borderMuted", "│")}${leftLine}${paneDivider}${rightLine}${th.fg("borderMuted", "│")}`);
+    }
+
+    const botMid = this.focusedPane === "right" ? th.fg("accent", "┴") : th.fg("borderMuted", "┴");
+    lines.push(th.fg("borderMuted", `├${"─".repeat(leftWidth)}`) + botMid + th.fg("borderMuted", `${"─".repeat(rightWidth)}┤`));
+
+    let hints = this.filterMode
+      ? " type to filter · Enter keep · Esc clear · ↑↓ browse · Tab pane "
+      : this.mode === "tree"
+      ? this.isMarkdownFile(this.selectedFile())
+        ? ` ↑↓ wrap · PgUp/PgDn · / filter · v ${this.markdownPreviewMode === "rendered" ? "raw" : "rendered"} · Tab pane · g git · Esc close `
+        : " ↑↓ wrap · PgUp/PgDn · / filter · Tab pane · g git · Esc close "
       : this.gitSubmode === "repo-picker"
-        ? ` ↑↓ wrap · Enter open repo · v ${this.paneLayout === "split" ? "single" : "split"} · Tab pane · t tree · Esc close `
-        : ` ↑↓ · Ctrl+U/D · a all · c changes · v ${this.paneLayout === "split" ? "single" : "split"} · Tab pane · Esc close `;
+        ? " ↑↓ wrap · / filter · Enter/r open repo · Tab pane · t tree · Esc close "
+        : ` ↑↓ · PgUp/PgDn · Ctrl+U/D · / filter · a all · c changes · r repos · v ${this.diffLayout === "side-by-side" ? "unified" : "side-by-side"} · Tab pane · Esc close `;
     const footer = th.fg("dim", truncateToWidth(hints, innerWidth));
     const footerPad = Math.max(0, innerWidth - visibleWidth(footer));
     lines.push(`${th.fg("borderMuted", "│")}${footer}${" ".repeat(footerPad)}${th.fg("borderMuted", "│")}`);
@@ -1282,10 +1615,9 @@ export class FileViewOverlay implements Focusable {
 
   private getLineNumberPrefix(lineIndex: number): string {
     if (!this.showLineNumbers) return "";
-    const maxLines = Math.max(1, this.previewContent.length);
-    const width = maxLines.toString().length;
-    const num = (lineIndex + 1).toString().padStart(width, " ");
-    return this.theme.fg("dim", `${num} │ `);
+    const label = this.previewLineNumbers[lineIndex];
+    const padded = (label ?? "").padStart(this.previewLineNumberWidth, " ");
+    return this.theme.fg("dim", `${padded} │ `);
   }
 
   private renderRightLine(row: number, width: number, _contentHeight: number): string {

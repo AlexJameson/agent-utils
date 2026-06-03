@@ -4,7 +4,9 @@ export type GitSubmode = "repo-picker" | "repo-tree";
 
 export type GitTreeScope = "changes" | "all";
 
-export type PaneLayout = "split" | "single";
+export type DiffLayout = "side-by-side" | "unified";
+
+export type MarkdownPreviewMode = "rendered" | "raw";
 
 export interface FileEntry {
   path: string;
@@ -23,7 +25,8 @@ export interface FileEntry {
 export interface OverlaySessionState {
   mode: FileViewMode;
   focusedPane: "left" | "right";
-  paneLayout: PaneLayout;
+  diffLayout: DiffLayout;
+  markdownPreviewMode: MarkdownPreviewMode;
   currentDir: string;
   selectedPath: string | null;
   leftScroll: number;

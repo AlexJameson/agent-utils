@@ -27,7 +27,9 @@ The current codebase is a single extension package with one custom overlay compo
 | F13 | Filtering the current visible directory or repo list | P0 | Removed |
 | F14 | Tree view hides dotfiles | P1 | Implemented |
 | F15 | Fast preview scrolling supports `PgUp/PgDn`, `Home/End`, and `Ctrl+U/Ctrl+D` | P1 | Implemented |
-| F16 | `v` toggles between split view and single full-width preview | P0 | Implemented |
+| F16 | `v` toggles git diff preview between side-by-side and unified while keeping navigation visible | P0 | Implemented |
+| F24 | `/` opens an explicit filter field for the left navigation pane without stealing normal navigation keys outside filter mode | P1 | Implemented |
+| F23 | On markdown files in tree mode, `v` toggles rendered preview vs raw source with line numbers | P1 | Implemented |
 | F17 | Git mode discovers repos with shallow recursion from `cwd` | P0 | Implemented |
 | F18 | Git mode lets the user switch between repo picker and repo tree | P0 | Implemented |
 | F19 | Git repo view defaults to branch/worktree changes and can toggle to all files | P0 | Implemented |
@@ -51,9 +53,7 @@ pi-file-view/
 ├── package.json
 ├── tsconfig.json
 ├── README.md
-├── plans/
-│   ├── architecture.md
-│   └── log.md
+├── architecture.md
 └── src/
     ├── index.ts
     ├── overlay.ts
@@ -74,8 +74,9 @@ Deployment note:
 - Local workspace edits do not affect runtime until that installed copy is updated or reinstalled
 
 Current overlay sizing request:
-- `width: "98%"`
-- `margin: 1`
+- `width: "100%"`
+- `maxHeight: "100%"`
+- `margin: 0`
 
 ### FileViewOverlay (`src/overlay.ts`)
 
@@ -84,16 +85,16 @@ Current overlay sizing request:
 - Draws the bordered split-pane layout and footer hints
 
 Current layout math:
-- Split view left pane: `30%`
-- Split view right pane: `70%`
-- Single view preview pane: `100%`
-- Height target: `Math.max(12, Math.min(rows - 2, Math.floor(rows * 0.94)))`
+- Left pane: `30%`
+- Right pane: `70%`
+- Height target: full available terminal height
 - Content height: `dialogHeight - 6`
 
 Session state currently persists for the lifetime of the Pi process:
 - mode
 - focused pane
-- pane layout (`split` or `single`)
+- diff layout (`side-by-side` or `unified`)
+- markdown preview mode (`rendered` or `raw`)
 - current directory
 - selected path
 - left scroll offset
@@ -106,6 +107,7 @@ Session state currently persists for the lifetime of the Pi process:
 - Uses `readdirSync(currentDir, { withFileTypes: true })`
 - Shows one directory level at a time
 - Hides entries whose names start with `.`
+- Supports an explicit `/` filter for the current visible list
 - Supports `Enter` / `l` / `→` to enter a directory
 - Supports `h` / `←` / `Backspace` to move to the parent directory
 - Supports cyclic `↑↓` navigation and page jumps
@@ -135,22 +137,27 @@ This is not a recursive `find`-based tree.
 Markdown:
 - Reads file text with `readFileSync(..., "utf8")`
 - Normalizes line endings
-- Renders through `pi-tui` `Markdown`
+- Renders through `pi-tui` `Markdown` in rendered mode
+- Can switch to raw source mode with real source line numbers
 - Builds the markdown theme from the overlay's local `ctx` theme instance instead of Pi's global theme singleton
 - Re-renders when the right pane width changes so wrapping stays correct
+- Does not show line numbers because rendered markdown lines do not map cleanly to source lines
 
 Generic files:
 - Reads file text with `readFileSync(..., "utf8")`
 - Normalizes line endings
-- Displays plain text lines in the preview pane
+- Wraps long lines to the available preview width
+- Keeps source line numbers visible in the preview gutter
 
 Directories:
 - Show short instructional preview text instead of file content
 
 Git diff:
-- Uses an internal side-by-side renderer for added and removed lines
+- Uses an internal renderer that can switch between side-by-side and unified diff views
 - Colors removed lines red and added lines green using the Pi theme
-- Uses `truncateToWidth()` during drawing
+- Wraps long lines in both diff modes to preserve full content inside the visible preview area
+- Unified mode shows actual diff source line labels using `old/new` numbering
+- Side-by-side mode omits line numbers rather than showing misleading wrapped-row counts
 - Right-pane scroll state is restored per file path
 
 Scrolling:
@@ -159,8 +166,18 @@ Scrolling:
 - `Home/End` jump to top and bottom
 
 View modes:
-- `v` toggles between split-pane browsing and single full-width preview
-- single-pane mode always keeps focus on the preview pane
+- the navigation pane stays visible at all times
+- `/` opens a temporary filter field for the current left-pane list
+- on markdown files in tree mode, `v` toggles rendered preview vs raw source
+- `v` toggles git diff rendering between side-by-side and unified
+- `r` toggles between the repo picker and the current repo view
+
+Filter behavior:
+- The filter only activates after pressing `/`
+- Typing updates the current visible list without affecting normal navigation outside filter mode
+- `Enter` leaves the filter and keeps the current query applied
+- `Esc` leaves the filter and clears the query
+- Arrow and paging keys leave the filter and continue browsing the filtered list
 
 ## Design Decisions
 
@@ -176,9 +193,13 @@ The overlay now builds its `MarkdownTheme` from the `ctx` theme instance passed 
 
 The current overlay behaves like a lightweight file browser rather than a precomputed recursive tree. `readdirSync()` plus explicit enter/up navigation keeps the implementation small and predictable.
 
-### Bias more space to preview content
+### Keep navigation visible while using preview-specific toggles
 
-The current split favors preview content while keeping the file list usable, and the overlay requests an aggressive width so markdown and diffs have more room. A single-pane preview mode is also available when the rendered content needs the full overlay width.
+The left pane is part of the browsing workflow, so preview toggles should change how the right pane renders content, not whether the navigation pane exists. The overlay keeps the split layout stable and uses `v` only for git diff presentation.
+
+### Wrap instead of truncate when possible
+
+The overlay budgets space for the line-number gutter before rendering text and diffs, then wraps to the remaining width. This preserves more of the actual content without requiring a larger terminal window.
 
 ### Default git mode to change review, not full repo listing
 
@@ -199,6 +220,7 @@ Git mode does not checkout branches or mutate the worktree. The repo tree is a l
 | Preview renders | Selecting file shows content in right pane |
 | Markdown preview | `.md` files render through `pi-tui` `Markdown` |
 | Fast preview scroll | `PgUp/PgDn`, `Home/End`, and `Ctrl+U/Ctrl+D` move through long previews |
-| View toggle | `v` switches between split and full-width preview |
-| Git diff | Git previews show internal side-by-side red/green diff rendering |
+| List filter | `/` filters the current left-pane list and does not intercept normal navigation outside filter mode |
+| View toggle | `v` switches markdown between rendered/raw in tree mode and switches git diff layout in repo view |
+| Git diff | Git previews show wrapped internal red/green diff rendering |
 | Git repo discovery | Git mode finds repos up to four levels below the current working directory |
