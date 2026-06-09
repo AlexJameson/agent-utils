@@ -3,9 +3,9 @@
   "private": true,
   "pi": {
     "extensions": [
-      "./plugins/pi-file-view",
-      "./plugins/tps-tracker",
-      "./plugins/pi-yandex-search"
+      "./extensions/pi-file-view",
+      "./extensions/tps-tracker",
+      "./extensions/pi-yandex-search"
     ],
     "skills": [
       "./skills"
