@@ -123,7 +123,7 @@ function buildSearchBody(query: string, options: SearchOptions): YandexSearchBod
       fixTypoMode: "FIX_TYPO_MODE_OFF",
     },
     folderId: FOLDER_ID,
-    groupSpec: { groupsOnPage: Math.min(options.numResults ?? 5, 20) },
+    groupSpec: { groupsOnPage: Math.min(options.numResults ?? 3, 20) },
     l10n,
     region,
     responseFormat: "FORMAT_XML",
@@ -160,15 +160,22 @@ function cleanHlword(text: string): string {
   return text.replace(/<hlword>|<\/hlword>/g, "").trim();
 }
 
+const MAX_SNIPPET_LENGTH = 300;
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max - 3) + "...";
+}
+
 function getBestSnippet(doc: string): string {
   const headline = extractText("headline", doc);
-  if (headline) return cleanHlword(headline);
+  if (headline) return truncate(cleanHlword(headline), MAX_SNIPPET_LENGTH);
 
   const passages = extractPassages(doc);
-  if (passages.length > 0) return cleanHlword(passages.join(" "));
+  if (passages.length > 0) return truncate(cleanHlword(passages[0]), MAX_SNIPPET_LENGTH);
 
   const extended = extractText("extended-text", doc);
-  if (extended) return cleanHlword(extended);
+  if (extended) return truncate(cleanHlword(extended), MAX_SNIPPET_LENGTH);
 
   return "";
 }
@@ -194,6 +201,35 @@ function parseResults(xml: string): import("./types.js").SearchResult[] {
 
 function buildCacheKey(query: string, options: SearchOptions): string {
   return `search:${query}:${options.numResults ?? 5}:${options.recencyFilter ?? "none"}:${options.searchRegion ?? "com"}`;
+}
+
+const MAX_CONTENT_LENGTH = 2000;
+
+async function fetchPageContent(url: string, signal?: AbortSignal): Promise<string> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html",
+      },
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
+    });
+    if (!response.ok) return `(HTTP ${response.status})`;
+
+    const html = await response.text();
+    // Strip tags, collapse whitespace, truncate
+    const text = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    return truncate(text, MAX_CONTENT_LENGTH);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return `(Error: ${message})`;
+  }
 }
 
 export async function searchYandex(
@@ -232,6 +268,12 @@ export async function searchYandex(
 
   const xml = Buffer.from(json.rawData, "base64").toString("utf-8");
   const results = parseResults(xml);
+
+  if (options.includeContent) {
+    for (const result of results) {
+      result.content = await fetchPageContent(result.url, signal);
+    }
+  }
 
   const result: QueryResult = { query, results, error: null };
   cache.setSearch(cacheKey, [result]);

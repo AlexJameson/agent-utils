@@ -2,6 +2,7 @@ export interface SearchResult {
   title: string;
   url: string;
   snippet: string;
+  content?: string;
 }
 
 export interface QueryResult {
@@ -14,6 +15,7 @@ export interface SearchOptions {
   numResults?: number;
   recencyFilter?: "day" | "week" | "month" | "year";
   searchRegion?: "ru" | "com" | "tr";
+  includeContent?: boolean;
 }
 
 export interface CachedToken {

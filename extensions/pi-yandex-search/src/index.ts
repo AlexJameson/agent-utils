@@ -32,6 +32,9 @@ function formatResults(results: QueryResult[]): string {
     for (let i = 0; i < r.results.length; i++) {
       const res = r.results[i];
       parts.push(`${i + 1}. **${res.title}**\n   ${res.url}\n   ${res.snippet}\n`);
+      if (res.content) {
+        parts.push(`   Content: ${res.content}\n`);
+      }
     }
   }
   return parts.join("\n").trim();
@@ -42,7 +45,7 @@ export default function (pi: ExtensionAPI) {
     name: "yandex_search",
     label: "Yandex Search",
     description:
-      "Search the web using Yandex Search API. Returns search results with titles, URLs, and snippets. For comprehensive research, prefer queries (plural) with 2-4 varied angles over a single query. Uses IAM token auth from Yandex Cloud metadata service (no API keys required on this VM).",
+      "Search the web using Yandex Search API. Returns search results with titles, URLs, and short snippets (~300 chars each). Default 3 results per query. Set includeContent to true to fetch truncated page text (~2000 chars) inline — this avoids expensive separate fetch_content calls. For comprehensive research, prefer queries (plural) with 2-4 varied angles over a single query. Uses IAM token auth from Yandex Cloud metadata service (no API keys required on this VM).",
     promptSnippet:
       "Use yandex_search for web research. Prefer {queries:[...]} with 2-4 varied angles over a single query for broader coverage.",
     promptGuidelines: [
@@ -53,8 +56,8 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       query: Type.Optional(Type.String({ description: "Single search query. For research tasks, prefer 'queries' with multiple varied angles instead." })),
       queries: Type.Optional(Type.Array(Type.String(), { description: "Multiple queries searched in sequence. Vary phrasing, scope, and angle across 2-4 queries to maximize coverage." })),
-      numResults: Type.Optional(Type.Number({ description: "Results per query (default: 5, max: 20)" })),
-      includeContent: Type.Optional(Type.Boolean({ description: "Fetch full page content (async) — NOT YET IMPLEMENTED. Leave false." })),
+      numResults: Type.Optional(Type.Number({ description: "Results per query (default: 3, max: 20)" })),
+      includeContent: Type.Optional(Type.Boolean({ description: "Fetch truncated page content (~2000 chars) inline. Avoids expensive separate fetch_content calls." })),
       recencyFilter: Type.Optional(
         StringEnum(["day", "week", "month", "year"], { description: "Filter by recency" }),
       ),
@@ -92,6 +95,7 @@ export default function (pi: ExtensionAPI) {
             numResults: params.numResults,
             recencyFilter: params.recencyFilter as "day" | "week" | "month" | "year" | undefined,
             searchRegion: params.searchRegion as "ru" | "com" | "tr" | undefined,
+            includeContent: params.includeContent ?? false,
           }, signal);
           results.push(result);
         } catch (err) {
