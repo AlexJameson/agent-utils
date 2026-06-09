@@ -4,8 +4,16 @@
   "pi": {
     "extensions": [
       "./plugins/pi-file-view",
-      "./plugins/tps-tracker"
+      "./plugins/tps-tracker",
+      "./plugins/pi-yandex-search"
     ],
-    "skills": ["./skills"]
+    "skills": [
+      "./skills"
+    ]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.79.0",
+    "@earendil-works/pi-coding-agent": "^0.79.0",
+    "typescript": "^6.0.3"
   }
 }

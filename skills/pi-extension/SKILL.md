@@ -58,7 +58,14 @@ Run the smallest useful checks:
 2. Compare workspace files to the installed Pi copy when runtime sync matters.
 3. Confirm docs and footer hints still match the implementation.
 
-## 8. Skill Installation
+## 8. Never Store Credentials in Versioned Code
+
+- **NEVER** hardcode API keys, tokens, passwords, or secrets in source files that will be committed.
+- Use environment variables, runtime metadata services (e.g., Yandex Cloud metadata at `169.254.169.254`), or external secret stores.
+- If a credential must be cached locally, use a temp file or runtime cache — not the repo.
+- Review diffs before committing to ensure no secrets leak.
+
+## 9. Skill Installation
 
 - Repo skills can live under `skills/<skill-name>/`.
 - A minimal skill folder should contain at least `SKILL.md` and `README.md`.

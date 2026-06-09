@@ -1,0 +1,21 @@
+{
+  "name": "pi-yandex-search",
+  "version": "0.1.0",
+  "description": "Pi extension for Yandex Search API with IAM metadata auth",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi-extension"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@earendil-works/pi-ai": "^0.78.0",
+    "typescript": "^5.4.0"
+  }
+}
