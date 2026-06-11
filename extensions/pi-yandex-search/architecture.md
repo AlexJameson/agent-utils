@@ -10,12 +10,12 @@ No credentials in source code. IAM tokens are fetched at runtime through a casca
 
 | Priority | Source | When it works |
 |----------|--------|---------------|
-| 1 | **Yandex Cloud metadata service** | On YC VMs (`169.254.169.254`) |
+| 1 | **Yandex Cloud metadata service** | On YC VMs (`169.***.***.***`) |
 | 2 | **`yc iam create-token`** | Laptop with YC CLI installed and authenticated |
 | 3 | **`YANDEX_IAM_TOKEN` env var** | Manual export, CI, etc. |
 | 4 | **`~/.pi/yandex-iam-token` file** | Last-resort user-managed token |
 
-Tokens are cached in memory until 60s before expiry. `FolderId` defaults to `b1gohoimamtqv2mmeb4j` but can be overridden via `YANDEX_FOLDER_ID` env var.
+Tokens are cached in memory until 60s before expiry. `FolderId` defaults to `b1g***` but can be overridden via `YANDEX_FOLDER_ID` env var.
 
 ## API
 
