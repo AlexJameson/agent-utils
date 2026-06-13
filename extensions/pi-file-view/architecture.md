@@ -25,7 +25,7 @@ The current codebase is a single extension package with one custom overlay compo
 | F11 | Overlay restores session state when closed and reopened in the same Pi session | P0 | Implemented |
 | F12 | Left-pane navigation wraps from first item to last and back | P0 | Implemented |
 | F13 | Filtering the current visible directory or repo list | P0 | Removed |
-| F14 | Tree view hides dotfiles | P1 | Implemented |
+| F14 | Tree view shows hidden files and folders by default | P1 | Implemented |
 | F15 | Fast preview scrolling supports `PgUp/PgDn`, `Home/End`, and `Ctrl+U/Ctrl+D` | P1 | Implemented |
 | F16 | `v` toggles git diff preview between side-by-side and unified while keeping navigation visible | P0 | Implemented |
 | F24 | `/` opens an explicit filter field for the left navigation pane without stealing normal navigation keys outside filter mode | P1 | Implemented |
@@ -106,7 +106,7 @@ Session state currently persists for the lifetime of the Pi process:
 
 - Uses `readdirSync(currentDir, { withFileTypes: true })`
 - Shows one directory level at a time
-- Hides entries whose names start with `.`
+- Shows hidden entries such as `.pi` by default
 - Supports an explicit `/` filter for the current visible list
 - Supports `Enter` / `l` / `→` to enter a directory
 - Supports `h` / `←` / `Backspace` to move to the parent directory

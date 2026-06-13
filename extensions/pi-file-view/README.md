@@ -55,6 +55,7 @@ pi -e ./src/index.ts
 Notes:
 
 - Plain-text file previews keep source line numbers when wrapped.
+- Hidden files and folders such as `.pi` are shown by default in tree and repo browsing views.
 - The navigation pane filter is modal: `/` opens it, `Enter` keeps the current filter, and `Esc` clears it.
 - Markdown files in tree mode can switch between rendered preview and raw source with line numbers using `v`.
 - Unified diff shows actual source line labels in `old/new` form such as `12/12`, `12/-`, and `-/12`.

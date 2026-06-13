@@ -411,7 +411,6 @@ export class FileViewOverlay implements Focusable {
       const files: FileEntry[] = [];
 
       for (const entry of entries) {
-        if (entry.name.startsWith(".")) continue;
         const fullPath = join(this.currentDir, entry.name);
         const fileEntry: FileEntry = {
           path: fullPath,
@@ -492,7 +491,6 @@ export class FileViewOverlay implements Focusable {
       const plainFiles: FileEntry[] = [];
 
       for (const entry of entries) {
-        if (entry.name.startsWith(".")) continue;
         const fullPath = join(dir, entry.name);
         const relPath = repoRoot ? relative(repoRoot, fullPath) : undefined;
         const item: FileEntry = {
@@ -754,7 +752,6 @@ export class FileViewOverlay implements Focusable {
         const entries = readdirSync(dir, { withFileTypes: true });
         for (const entry of entries) {
           if (!entry.isDirectory()) continue;
-          if (entry.name.startsWith(".")) continue;
           if (entry.name === "node_modules" || entry.name === "dist" || entry.name === "out") continue;
           walk(join(dir, entry.name), remainingDepth - 1);
         }
