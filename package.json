@@ -4,7 +4,6 @@
   "pi": {
     "extensions": [
       "./extensions/pi-file-view",
-      "./extensions/tps-tracker",
       "./extensions/pi-yandex-search"
     ],
     "skills": [
