@@ -241,6 +241,30 @@ export class FileViewOverlay implements Focusable {
     this.textPreviewWidth = targetWidth;
   }
 
+  private readPreviewText(filePath: string): string | null {
+    const content = readFileSync(filePath);
+    if (content.includes(0)) {
+      return null;
+    }
+
+    return content
+      .toString("utf8")
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "?");
+  }
+
+  private setBinaryPreview(fileName: string, title?: string) {
+    const lines = title
+      ? [
+        this.theme.fg("accent", title),
+        "",
+        this.theme.fg("dim", `${fileName} is a binary file`),
+      ]
+      : [this.theme.fg("dim", `${fileName} is a binary file`)];
+    this.setTextPreview(lines);
+  }
+
   private renderDiffPreview(width: number) {
     if (!this.diffPreview) {
       return;
@@ -847,19 +871,22 @@ export class FileViewOverlay implements Focusable {
 
   private loadMarkdownPreview(file: FileEntry) {
     try {
-      const content = readFileSync(file.path, "utf8");
+      const content = this.readPreviewText(file.path);
+      if (content === null) {
+        this.setBinaryPreview(file.name);
+        return;
+      }
       if (content === "") {
         this.setTextPreview([this.theme.fg("dim", "(empty file)")]);
         return;
       }
 
-      const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      if (!normalized.split("\n").some((line) => line.trim().length > 0)) {
+      if (!content.split("\n").some((line) => line.trim().length > 0)) {
         this.setTextPreview([this.theme.fg("dim", "(blank file)")]);
         return;
       }
 
-      this.markdownPreview = new Markdown(normalized, 0, 0, this.getMarkdownTheme(), {
+      this.markdownPreview = new Markdown(content, 0, 0, this.getMarkdownTheme(), {
         color: (text) => this.theme.fg("text", text),
       });
       this.renderMarkdownPreview(1, file.name);
@@ -892,12 +919,16 @@ export class FileViewOverlay implements Focusable {
     }
 
     try {
-      const content = readFileSync(file.path, "utf8");
+      const content = this.readPreviewText(file.path);
+      if (content === null) {
+        this.setBinaryPreview(file.name);
+        return;
+      }
       if (content === "") {
         this.setTextPreview([this.theme.fg("dim", "(empty file)")], { lineNumbers: ["1"] });
         return;
       }
-      const lines = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+      const lines = content.split("\n");
       if (!lines.some((line) => line.trim().length > 0)) {
         this.setTextPreview([this.theme.fg("dim", "(blank file)")], { lineNumbers: ["1"] });
         return;
@@ -959,8 +990,13 @@ export class FileViewOverlay implements Focusable {
     }
 
     try {
-      const content = readFileSync(file.path, "utf8");
-      const lines = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+      const content = this.readPreviewText(file.path);
+      if (content === null) {
+        this.setBinaryPreview(file.name, title);
+        return;
+      }
+
+      const lines = content.split("\n");
       const body = content === ""
         ? [this.theme.fg("dim", "(empty file)")]
         : lines.some((line) => line.trim().length > 0)
