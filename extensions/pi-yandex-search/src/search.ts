@@ -209,27 +209,79 @@ async function fetchPageContent(url: string, signal?: AbortSignal): Promise<stri
   try {
     const response = await fetch(url, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "text/html",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
       },
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
     });
     if (!response.ok) return `(HTTP ${response.status})`;
 
     const html = await response.text();
-    // Strip tags, collapse whitespace, truncate
-    const text = html
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    return truncate(text, MAX_CONTENT_LENGTH);
+    return htmlToMarkdown(html, url);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return `(Error: ${message})`;
   }
+}
+
+function htmlToMarkdown(html: string, _url: string): string {
+  try {
+    // Lazy-load heavy deps only when includeContent is used
+    const { parseHTML } = require("linkedom") as typeof import("linkedom");
+    const { Readability } = require("@mozilla/readability") as typeof import("@mozilla/readability");
+    const TurndownService = require("turndown") as typeof import("turndown");
+
+    const { document } = parseHTML(html);
+    const reader = new Readability(document as unknown as Document);
+    const article = reader.parse();
+
+    if (!article || !article.content) {
+      // Fallback: strip tags to plain text
+      return stripHtmlToText(html);
+    }
+
+    const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
+    turndown.addRule("removeAnchorLinks", {
+      filter: (node: { nodeName: string; getAttribute?: (name: string) => string | null }) => {
+        if (node.nodeName !== "A") return false;
+        const href = node.getAttribute?.("href") ?? "";
+        return href.startsWith("#");
+      },
+      replacement: (content: string) => content,
+    });
+    turndown.addRule("removeEmptyLinks", {
+      filter: (node: { nodeName: string; textContent?: string }) =>
+        node.nodeName === "A" && !node.textContent?.trim(),
+      replacement: () => "",
+    });
+
+    let markdown = turndown.turndown(article.content)
+      .replace(/\[\\?\[\s*\\?\]\]\([^)]*\)/g, "")
+      .replace(/ +/g, " ")
+      .replace(/\s+,/g, ",")
+      .replace(/\s+\./g, ".")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    if (article.title) {
+      markdown = `# ${article.title}\n\n${markdown}`;
+    }
+
+    return truncate(markdown, MAX_CONTENT_LENGTH);
+  } catch {
+    return stripHtmlToText(html);
+  }
+}
+
+function stripHtmlToText(html: string): string {
+  const text = html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return truncate(text, MAX_CONTENT_LENGTH);
 }
 
 export async function searchYandex(
