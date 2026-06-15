@@ -8,3 +8,4 @@ A collection of tools, skills, and extensions.
 - **[`extensions/pi-yandex-search/`](extensions/pi-yandex-search/README.md)** — Yandex Search API extension for Pi (replaces broken `web_search` on DPI-blocked infrastructure).
 - **[`skills/print-image-prep/`](skills/print-image-prep/README.md)** — Skill for preparing image collections for high-quality printing.
 - **[`skills/pi-extension/`](skills/pi-extension/README.md)** — Minimal skill for building and debugging Pi extensions and Pi skills.
+- **[`skills/lib-simplified/`](skills/lib-simplified/SKILL.md)** — Research open-source libraries using `yandex_search` + `web_fetch` + bash (forked from `librarian`, replaces `pi-web-access` tools).
