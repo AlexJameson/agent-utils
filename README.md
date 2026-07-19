@@ -9,3 +9,4 @@ A collection of tools, skills, and extensions.
 - **[`skills/print-image-prep/`](skills/print-image-prep/README.md)** — Skill for preparing image collections for high-quality printing.
 - **[`skills/pi-extension/`](skills/pi-extension/README.md)** — Minimal skill for building and debugging Pi extensions and Pi skills.
 - **[`skills/lib-simplified/`](skills/lib-simplified/SKILL.md)** — Research open-source libraries using `yandex_search` + `web_fetch` + bash (forked from `librarian`, replaces `pi-web-access` tools).
+- **[`docs-preset/`](docs-preset/README.md)** — OpenCode preset for creating and maintaining user-facing docs with repo-aware contracts.
