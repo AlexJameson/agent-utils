@@ -135,7 +135,7 @@ inside the user's first real task.
 | V1-SC-12 | Read local agent/rules files only as safety constraints when relevant. Do not classify agent workflow docs, planning specs, or assistant command files as documentation surfaces unless the user explicitly asks to document the agent workflow itself. |
 | V1-SC-13 | Contracts must be forward-extensible: unknown keys are preserved, optional `extensions` records may describe repo/tool-specific capabilities, and agents must not delete unrecognized fields. |
 
-### RS-V1-3 — `docs` OpenCode Primary Agent
+### RS-V1-3 — `documentation-writer` OpenCode Primary Agent
 
 | ID | Requirement |
 |---|---|

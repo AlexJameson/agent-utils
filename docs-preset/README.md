@@ -17,7 +17,8 @@ editable contracts, and the primary agent does the day-to-day work.
 - `skills/docs-env-scan/` — scan skill: discovers your docs tooling and
   user-facing documentation surfaces, drafts style conventions, writes
   validated contracts.
-- `REQUIREMENTS.md` — versioned requirement sets for v1, v2, and v3.
+- `REQUIREMENTS.md` — design/reference notes for this preset repository. It is
+  not required in target repos.
 
 ## Install
 
@@ -47,7 +48,7 @@ conventions.
 
 ## Status
 
-v1 scaffold — skill and agent bodies are being written against
-`REQUIREMENTS.md`. V2 and V3 items such as quality scoring, export pipelines,
-product-type template packs, reviewer subagents, and platform integrations are
-intentionally absent.
+v1 portable preset. Copy only `agent/documentation-writer.md` and the two skill
+directories into target repos. V2 and V3 items such as quality scoring, export
+pipelines, product-type template packs, reviewer subagents, and platform
+integrations are intentionally absent.
